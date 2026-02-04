@@ -16,7 +16,6 @@ type WebSocketHandler struct {
 }
 
 func NewWebSocketHandler(hub *Hub, gameUC *usecases.GameUseCases) *WebSocketHandler {
-	// Configura o handler de eventos do Hub para usar este Controller
 	handler := &WebSocketHandler{
 		hub:    hub,
 		gameUC: gameUC,
@@ -29,10 +28,13 @@ func NewWebSocketHandler(hub *Hub, gameUC *usecases.GameUseCases) *WebSocketHand
 
 // HandleWS faz o upgrade da conexão HTTP para WebSocket.
 func (h *WebSocketHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
-	// Query params para identificar sala e (opcionalmente) player
-	roomID := r.URL.Query().Get("room")
+	roomID := r.URL.Query().Get("roomId")
 	if roomID == "" {
-		http.Error(w, "Room ID required", http.StatusBadRequest)
+		roomID = r.URL.Query().Get("room")
+	}
+
+	if roomID == "" {
+		http.Error(w, "Room ID required (roomId)", http.StatusBadRequest)
 		return
 	}
 
@@ -42,7 +44,6 @@ func (h *WebSocketHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Gera ID de sessão se não tiver
 	sessionID := uuid.NewString()
 
 	client := &Client{
@@ -50,7 +51,7 @@ func (h *WebSocketHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		RoomID:   roomID,
-		PlayerID: sessionID, // Inicialmente sessionID, pode ser associado a Player real no Join
+		PlayerID: sessionID,
 	}
 
 	client.Hub.register <- client
@@ -61,28 +62,42 @@ func (h *WebSocketHandler) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 // HandleEvent processa mensagens vindas dos clientes (Router de Eventos).
 func (h *WebSocketHandler) HandleEvent(client *Client, msg Envelope) {
-	// Parse do payload dependendo do tipo
-	// msg.Type determina qual UseCase chamar.
-
 	switch msg.Type {
 	case "join_room":
 		var payload struct {
 			Nickname string `json:"nickname"`
 		}
 		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
-			// Adiciona player na sala
-			// O sessionID é o PlayerID neste contexto (aluno anônimo)
 			_, err := h.gameUC.JoinRoom(client.RoomID, payload.Nickname, client.PlayerID)
 			if err != nil {
 				h.sendError(client.PlayerID, err.Error())
 			}
 		}
 
+	case "teacher_moderate_entry":
+		var payload struct {
+			TeacherID    string `json:"teacherId"`
+			ConnectionID string `json:"connectionId"`
+			Action       string `json:"action"` // ACCEPT | REJECT
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			if err := h.gameUC.ModerateEntry(client.RoomID, payload.TeacherID, payload.ConnectionID, payload.Action); err != nil {
+				h.sendError(client.PlayerID, err.Error())
+			}
+		}
+
+	case "teacher_kick_player":
+		var payload struct {
+			TeacherID    string `json:"teacherId"`
+			ConnectionID string `json:"connectionId"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			if err := h.gameUC.KickPlayer(client.RoomID, payload.TeacherID, payload.ConnectionID); err != nil {
+				h.sendError(client.PlayerID, err.Error())
+			}
+		}
+
 	case "teacher_open_question":
-		// Payload: {teacherId} - Idealmente viria do token JWT na conexão WS
-		// Simplificação: TeacherID enviado no payload ou confiamos se souber o RoomID?
-		// Vamos exigir teacherID no payload por enquanto, mas inseguro.
-		// TODO: Autenticar WS com JWT.
 		var payload struct {
 			TeacherID string `json:"teacherId"`
 		}
@@ -111,8 +126,6 @@ func (h *WebSocketHandler) HandleEvent(client *Client, msg Envelope) {
 				h.sendError(client.PlayerID, err.Error())
 			}
 		}
-
-	// ... NextQuestion, FinishRoom ...
 
 	default:
 		log.Printf("Evento desconhecido: %s", msg.Type)

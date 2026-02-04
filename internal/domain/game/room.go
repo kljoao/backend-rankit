@@ -47,8 +47,9 @@ type Room struct {
 	Status               string
 	CurrentQuestionIndex int
 
-	Players map[string]*Player // Map[PlayerID]*Player
-	Answers map[string]*Answer // Map[PlayerID]*Answer (da pergunta atual)
+	PendingPlayers map[string]*Player // Map[SessionID]*Player (Aguardando aprovação)
+	Players        map[string]*Player // Map[SessionID]*Player (Aprovados)
+	Answers        map[string]*Answer // Map[PlayerID]*Answer (da pergunta atual)
 
 	mu sync.RWMutex // Mutex para garantir thread-safety
 }
@@ -62,33 +63,105 @@ func NewRoom(id, teacherID string, q *quiz.Quiz) *Room {
 		Status:               StateLobby,
 		CurrentQuestionIndex: -1, // Ainda não começou
 		Players:              make(map[string]*Player),
+		PendingPlayers:       make(map[string]*Player),
 		Answers:              make(map[string]*Answer),
 	}
 }
 
 // --- Métodos de Controle do Jogo (State Machine) ---
 
-// Join adiciona um jogador à sala.
-func (r *Room) Join(playerID, nickname string) (*Player, error) {
+// JoinRequest adiciona um jogador à lista de pendentes.
+func (r *Room) JoinRequest(sessionID, nickname string) (*Player, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Se já existe, reconecta
-	if p, exists := r.Players[playerID]; exists {
+	// 1. Bloqueio de entrada se sala já iniciada
+	if r.Status != StateLobby {
+		// Se já é player aprovado, permite reconexão (lógica abaixo)
+		if p, ok := r.Players[sessionID]; ok {
+			p.Connected = true
+			return p, nil
+		}
+		return nil, ErrSalaIniciada
+	}
+
+	// 2. Se já aprovado, retorna ok
+	if p, ok := r.Players[sessionID]; ok {
 		p.Connected = true
 		return p, nil
 	}
 
-	// Regra: Não entrar se jogo finalizado? (Opcional, mas vamos permitir spectate)
+	// 3. Adiciona aos pendentes
+	// Check duplicidade de nickname (opcional, mas bom)
+	for _, p := range r.Players {
+		if p.Nickname == nickname {
+			return nil, errors.New("apelido já em uso na sala")
+		}
+	}
 
 	p := &Player{
-		ID:        playerID,
+		ID:        sessionID,
 		Nickname:  nickname,
 		Score:     0,
 		Connected: true,
 	}
-	r.Players[playerID] = p
+	r.PendingPlayers[sessionID] = p
 	return p, nil
+}
+
+// ApprovePlayer move o jogador de pendente para aprovado.
+func (r *Room) ApprovePlayer(sessionID string) (*Player, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	p, ok := r.PendingPlayers[sessionID]
+	if !ok {
+		// Se já estiver em Players, ignora erro
+		if approved, exists := r.Players[sessionID]; exists {
+			return approved, nil
+		}
+		return nil, errors.New("jogador não encontrada na lista de pendentes")
+	}
+
+	delete(r.PendingPlayers, sessionID)
+	r.Players[sessionID] = p
+	return p, nil
+}
+
+// RejectPlayer remove o jogador da lista de pendentes.
+func (r *Room) RejectPlayer(sessionID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.PendingPlayers[sessionID]; !ok {
+		return errors.New("jogador não encontrado na lista de pendentes")
+	}
+	delete(r.PendingPlayers, sessionID)
+	return nil
+}
+
+// RemovePlayer remove um jogador aprovado da sala (Kick).
+func (r *Room) RemovePlayer(playerID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.Players[playerID]; !ok {
+		return errors.New("jogador não encontrado na sala")
+	}
+
+	delete(r.Players, playerID)
+	// Também remove resposta se houver
+	delete(r.Answers, playerID)
+
+	return nil
+}
+
+// Join (Legado/Direto) - Mantido para compatibilidade se necessário, ou removido/adaptado
+func (r *Room) Join(playerID, nickname string) (*Player, error) {
+	// Redireciona para JoinRequest por padrão, ou mantém lógica antiga
+	// Se quisermos manter compatibilidade sem moderação, podemos usar este.
+	// Mas o requisito pede moderação.
+	return r.JoinRequest(playerID, nickname)
 }
 
 // NextQuestion avança para a próxima pergunta (ou inicia a primeira).

@@ -103,5 +103,14 @@ func NewRouter(
 		r.Get("/{id}", gameHandler.GetRoom)
 	})
 
+	// Grupo de rotas de Relatórios (Protegidas)
+	r.Route("/reports", func(r chi.Router) {
+		r.Use(middlewares.AuthMiddleware(tokenService))
+
+		r.Get("/rooms", reportHandler.ListRooms)
+		r.Get("/rooms/{id}", reportHandler.GetRoomDetail)
+		r.Get("/quizzes/{id}", reportHandler.GetQuizStats)
+	})
+
 	return r
 }

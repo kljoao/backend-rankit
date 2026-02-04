@@ -38,14 +38,14 @@ func (uc *QuestionUseCases) ensureDraftAndOwner(ctx context.Context, quizID, tea
 }
 
 type AddQuestionInput struct {
-	QuizID       string
-	TeacherID    string
-	Prompt       string
-	OptionA      string
-	OptionB      string
-	OptionC      string
-	OptionD      string
-	CorrectIndex int
+	QuizID       string `json:"-"` // Path param
+	TeacherID    string `json:"-"` // Context
+	Prompt       string `json:"prompt"`
+	OptionA      string `json:"optionA"`
+	OptionB      string `json:"optionB"`
+	OptionC      string `json:"optionC"`
+	OptionD      string `json:"optionD"`
+	CorrectIndex int    `json:"correctIndex"`
 }
 
 func (uc *QuestionUseCases) AddQuestion(ctx context.Context, input AddQuestionInput) (*quiz.Question, error) {
@@ -77,15 +77,15 @@ func (uc *QuestionUseCases) AddQuestion(ctx context.Context, input AddQuestionIn
 }
 
 type UpdateQuestionInput struct {
-	QuizID       string
-	QuestionID   string
-	TeacherID    string
-	Prompt       string
-	OptionA      string
-	OptionB      string
-	OptionC      string
-	OptionD      string
-	CorrectIndex int
+	QuizID       string `json:"-"`
+	QuestionID   string `json:"-"`
+	TeacherID    string `json:"-"`
+	Prompt       string `json:"prompt"`
+	OptionA      string `json:"optionA"`
+	OptionB      string `json:"optionB"`
+	OptionC      string `json:"optionC"`
+	OptionD      string `json:"optionD"`
+	CorrectIndex int    `json:"correctIndex"`
 }
 
 func (uc *QuestionUseCases) UpdateQuestion(ctx context.Context, input UpdateQuestionInput) (*quiz.Question, error) {
